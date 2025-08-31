@@ -1,2 +1,4 @@
 SQLAlchemy
 pg8000
+python-dotenv
+psycopg2
