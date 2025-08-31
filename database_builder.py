@@ -1,5 +1,7 @@
 # database_builder.py
-
+import time
+from sqlalchemy import create_engine, text, make_url
+from sqlalchemy.exc import OperationalError, ProgrammingError
 import uuid
 from sqlalchemy import (
     create_engine,
@@ -15,8 +17,7 @@ from sqlalchemy import (
     PrimaryKeyConstraint,
     text
 )
-from sqlalchemy.orm import declarative_base, relationship
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import os
@@ -25,8 +26,7 @@ import os
 # Se recomienda usar variables de entorno para la configuración de la base de datos.
 # Ejemplo de URL de conexión para PostgreSQL:
 # DATABASE_URL = "postgresql://user:password@host:port/database"
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql+pg8000://postgres:admin@localhost:5432/personal_finance")
-
+DATABASE_URL = os.environ.get("DATABASE_URL")
 # Declarative Base: La clase base de la cual heredarán todos los modelos (tablas).
 Base = declarative_base()
 
@@ -228,41 +228,23 @@ def setup_database():
     """
     Asegura que la base de datos exista y luego crea el esquema de tablas.
     """
-    db_name = "personal_finance"
-    # Usamos la URL base para conectar al servidor PostgreSQL (sin base de datos específica)
-    # y poder crear nuestra base de datos.
-    server_url = "postgresql+pg8000://postgres:admin@localhost:5432/"
+    # Lee la variable de entorno
+    if not DATABASE_URL:
+        print("❌ Error: La variable de entorno DATABASE_URL no está configurada.")
+        return
     
-    engine = create_engine(server_url)
+    # Parsea la URL para obtener sus partes
+    db_url_obj = make_url(DATABASE_URL)
+    server_url = db_url_obj.set(database=None)
+    db_name = db_url_obj.database
 
-    try:
-        # Intentamos crear la base de datos. Usamos AUTOCOMMIT.
-        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-            print(f"Intentando crear la base de datos '{db_name}' si no existe...")
-            conn.execute(text(f"CREATE DATABASE {db_name}"))
-            print(f"Base de datos '{db_name}' creada.")
-    except ProgrammingError:
-        # Si la base de datos ya existe, PostgreSQL arroja un error.
-        # Lo capturamos y continuamos, ya que es el estado deseado.
-        print(f"La base de datos '{db_name}' ya existe.")
-    except Exception as e:
-        print(f"Ocurrió un error inesperado al crear la base de datos: {e}")
-        return # No continuar si hay un error
-    finally:
-        engine.dispose()
-
-    # --- Creación de Tablas ---
-    # Ahora nos conectamos a la base de datos recién creada/verificada.
-    db_url = f"{server_url}{db_name}"
-    engine = create_engine(db_url)
-    try:
-        print(f"Conectando a '{db_name}' para crear las tablas...")
-        Base.metadata.create_all(engine)
-        print("¡Éxito! Todas las tablas han sido creadas correctamente.")
-        print(f"URL: {engine.url}")
-    except Exception as e:
-        print(f"Error al crear las tablas: {e}")
-
-if __name__ == "__main__":
-    # Esta función se ejecutará cuando corras el script directamente.
-    setup_database()
+    # Bucle de espera para la base de datos
+    for i in range(5):
+        try:
+            engine = create_engine(server_url)
+            with engine.connect() as conn:
+                print("✅ Conexión al servidor de base de datos exitosa.")
+                break
+        except OperationalError:
+            print(f"⏳ Esperando al servidor de base de datos... (intento {i+1}/5)")
+            time.sleep(2)
