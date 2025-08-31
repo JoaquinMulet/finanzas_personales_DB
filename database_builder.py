@@ -1,8 +1,8 @@
 # database_builder.py
-import time
-from sqlalchemy import create_engine, text, make_url
-from sqlalchemy.exc import OperationalError, ProgrammingError
+
 import uuid
+import os
+import time
 from sqlalchemy import (
     create_engine,
     Column,
@@ -15,30 +15,29 @@ from sqlalchemy import (
     ForeignKey,
     Table,
     PrimaryKeyConstraint,
-    text
+    text,
+    make_url
 )
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
-import os
 
 # --- 1. CONFIGURACIÓN DE LA BASE DE DATOS ---
-# Se recomienda usar variables de entorno para la configuración de la base de datos.
-# Ejemplo de URL de conexión para PostgreSQL:
-# DATABASE_URL = "postgresql://user:password@host:port/database"
 DATABASE_URL = os.environ.get("DATABASE_URL")
-# Declarative Base: La clase base de la cual heredarán todos los modelos (tablas).
+
+# Declarative Base
 Base = declarative_base()
 
-# --- 2. DEFINICIÓN DE TABLAS DE ASOCIACIÓN (Muchos a Muchos) ---
+# --- 2. DEFINICIÓN DE TABLAS DE ASOCIACIÓN ---
 
-# Tabla de uniión para la relación entre Transactions y Tags
+# Tabla de unión para la relación entre Transactions y Tags
 transaction_tags_table = Table('transaction_tags', Base.metadata,
     Column('transaction_id', UUID(as_uuid=True), ForeignKey('transactions.transaction_id'), primary_key=True),
     Column('tag_id', Integer, ForeignKey('tags.tag_id'), primary_key=True)
 )
 
-# Tabla de uniión para la relación entre Goals y Accounts
+# Tabla de unión para la relación entre Goals y Accounts
 goal_accounts_table = Table('goal_accounts', Base.metadata,
     Column('goal_id', UUID(as_uuid=True), ForeignKey('goals.goal_id'), primary_key=True),
     Column('account_id', UUID(as_uuid=True), ForeignKey('accounts.account_id'), primary_key=True)
@@ -52,7 +51,6 @@ goal_accounts_table = Table('goal_accounts', Base.metadata,
 class Account(Base):
     """
     Representa un contenedor financiero: una cuenta bancaria, tarjeta de crédito, etc.
-    Es la base para el cálculo del patrimonio neto.
     """
     __tablename__ = 'accounts'
     account_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -68,7 +66,6 @@ class Account(Base):
 class Category(Base):
     """
     Define la taxonomía jerárquica para clasificar transacciones.
-    Es el motor para el análisis de gastos e ingresos.
     """
     __tablename__ = 'categories'
     category_id = Column(Integer, primary_key=True, autoincrement=True)
@@ -83,8 +80,7 @@ class Category(Base):
 
 class Merchant(Base):
     """
-    Normaliza la información de los comercios para evitar duplicados y
-    permitir análisis por comerciante.
+    Normaliza la información de los comercios para análisis.
     """
     __tablename__ = 'merchants'
     merchant_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -97,8 +93,7 @@ class Merchant(Base):
 
 class Tag(Base):
     """
-    Permite el etiquetado flexible y multidimensional de transacciones
-    para agrupar gastos por eventos (ej. "Vacaciones 2025").
+    Permite el etiquetado flexible de transacciones por eventos.
     """
     __tablename__ = 'tags'
     tag_id = Column(Integer, primary_key=True, autoincrement=True)
@@ -112,8 +107,7 @@ class Tag(Base):
 
 class Transaction(Base):
     """
-    El libro diario contable inmutable. Cada registro es un evento financiero
-    que sigue el principio de no ser modificado ni eliminado, solo anulado o corregido.
+    El libro diario contable inmutable de eventos financieros.
     """
     __tablename__ = 'transactions'
     transaction_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -141,7 +135,6 @@ class Transaction(Base):
 class TransactionSplit(Base):
     """ 
     Detalla las partes de una transacción dividida en múltiples categorías.
-    Es una tabla hija de 'Transactions'.
     """
     __tablename__ = 'transaction_splits'
     split_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -157,8 +150,7 @@ class TransactionSplit(Base):
 
 class AssetValuationHistory(Base):
     """
-    Rastrea el valor histórico de activos no líquidos (propiedades, vehículos)
-    para un cálculo preciso del patrimonio neto.
+    Rastrea el valor histórico de activos no líquidos.
     """
     __tablename__ = 'asset_valuation_history'
     valuation_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -171,7 +163,7 @@ class AssetValuationHistory(Base):
 
 class Goal(Base):
     """
-    Define una meta financiera, como un fondo de emergencia o el pie para un departamento.
+    Define una meta financiera.
     """
     __tablename__ = 'goals'
     goal_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -187,8 +179,7 @@ class Goal(Base):
 
 class MonthlyCategorySummary(Base):
     """
-    Tabla pre-calculada (o vista materializada) para acelerar la carga de reportes.
-    Debe ser actualizada por un proceso batch nocturno.
+    Tabla pre-calculada para acelerar reportes.
     """
     __tablename__ = 'monthly_category_summary'
     year = Column(Integer, nullable=False)
@@ -204,41 +195,40 @@ class MonthlyCategorySummary(Base):
     
     category = relationship("Category")
 
-# --- Sección 3.5: NUEVA SECCIÓN PARA LA MEMORIA DEL AGENTE ---
+# Sección 3.5: Memoria del Agente
 
 class Memory(Base):
     """
     Almacena la memoria a largo plazo del Agente de IA.
-    Guarda hechos y preferencias clave sobre el usuario para personalizar interacciones futuras.
     """
     __tablename__ = 'agent_memory'
     memory_id = Column(Integer, primary_key=True, autoincrement=True)
-    
-    # Podríamos usar el número de teléfono del usuario o un ID fijo,
-    # ya que por ahora solo hay un usuario.
     user_id = Column(String(255), nullable=False, default='default_user', index=True)
-    
     memory_text = Column(String, nullable=False, comment="El hecho o preferencia a recordar.")
-    
-    # Usamos server_default para que la base de datos gestione la fecha de creación.
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 # --- 4. EJECUCIÓN DEL SCRIPT ---
 def setup_database():
     """
-    Asegura que la base de datos exista y luego crea el esquema de tablas.
+    Asegura que la base de datos exista y luego crea el esquema de tablas,
+    utilizando la variable de entorno DATABASE_URL.
     """
-    # Lee la variable de entorno
     if not DATABASE_URL:
         print("❌ Error: La variable de entorno DATABASE_URL no está configurada.")
         return
-    
-    # Parsea la URL para obtener sus partes
-    db_url_obj = make_url(DATABASE_URL)
+
+    try:
+        db_url_obj = make_url(DATABASE_URL)
+    except Exception as e:
+        print(f"❌ Error: La DATABASE_URL ('{DATABASE_URL}') no es válida: {e}")
+        return
+
+    # Creamos una URL para conectar al servidor PostgreSQL (sin especificar la base de datos)
     server_url = db_url_obj.set(database=None)
     db_name = db_url_obj.database
 
-    # Bucle de espera para la base de datos
+    # Esperamos a que el servidor de base de datos esté listo
+    engine = None
     for i in range(5):
         try:
             engine = create_engine(server_url)
@@ -248,3 +238,39 @@ def setup_database():
         except OperationalError:
             print(f"⏳ Esperando al servidor de base de datos... (intento {i+1}/5)")
             time.sleep(2)
+    else:
+        print("❌ Error: No se pudo conectar al servidor de base de datos después de varios intentos.")
+        return
+
+    # Intentamos crear la base de datos
+    try:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            print(f"Intentando crear la base de datos '{db_name}' si no existe...")
+            conn.execute(text(f"CREATE DATABASE {db_name}"))
+            print(f"Base de datos '{db_name}' creada o ya existente.")
+    except ProgrammingError:
+        print(f"ℹ️ La base de datos '{db_name}' ya existe.")
+    except Exception as e:
+        print(f"⚠️ Ocurrió un error inesperado al verificar/crear la base de datos: {e}")
+    finally:
+        if engine:
+            engine.dispose()
+
+    # --- Creación de Tablas ---
+    # Ahora nos conectamos a la base de datos específica
+    engine = None
+    try:
+        engine = create_engine(DATABASE_URL)
+        print(f"Conectando a '{db_name}' para crear las tablas...")
+        Base.metadata.create_all(engine)
+        print("🎉 ¡Éxito! Todas las tablas han sido creadas correctamente.")
+        print(f"URL de conexión final: {engine.url.render_as_string(hide_password=True)}")
+    except Exception as e:
+        print(f"❌ Error al crear las tablas: {e}")
+    finally:
+        if engine:
+            engine.dispose()
+
+
+if __name__ == "__main__":
+    setup_database()
