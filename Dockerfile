@@ -1,5 +1,10 @@
-# Stage 1: "builder" - Instala las dependencias en un entorno virtual
+# Stage 1: "builder" - Instala las dependencias en un entorno robusto
 FROM python:3.11-bullseye as builder
+
+# Instala las dependencias del sistema necesarias para compilar algunas librerías de Python
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev
 
 # Crea un entorno de trabajo y un entorno virtual
 WORKDIR /app
@@ -13,6 +18,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Stage 2: "final" - Construye la imagen de producción ligera
 FROM python:3.11-slim-bullseye
 
+# Instala SOLO las librerías de sistema necesarias para EJECUTAR la aplicación
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copia el entorno virtual con las dependencias desde la etapa "builder"
@@ -24,7 +34,5 @@ COPY . .
 # Activa el entorno virtual para los comandos que se ejecuten
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Comando que Railway ejecutará al iniciar el contenedor.
-# Se conectará a la base de datos usando la variable de entorno DATABASE_URL
-# y creará el esquema de la base de datos.
+# Comando que se ejecutará al iniciar el contenedor.
 CMD ["python", "database_builder.py"]
